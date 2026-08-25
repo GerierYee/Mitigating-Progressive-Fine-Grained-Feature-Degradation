@@ -1,0 +1,59 @@
+# YOLO26-CMD + P2 增强版 + LightASFF（安全版本）
+nc: 10
+scales: 
+  n: [0.33, 0.25, 1024]
+depth_multiple: 0.33
+width_multiple: 0.25
+max_channels: 1024
+backbone:
+  # [from, repeats, module, args]
+  - [-1, 1, Conv, [64, 3, 2]]                  # 0-P1/2
+  - [-1, 1, SPD_Downsample, [128]]             # 1-P2/4
+  - [-1, 3, C3k2, [128, True]]                 # 2  ← P2特征
+  - [-1, 1, SPD_Downsample, [256]]             # 3-P3/8
+  - [-1, 6, C3k2, [256, True]]                 # 4
+  - [-1, 1, Conv, [512, 3, 2]]                 # 5-P4/16
+  - [-1, 6, C3k2, [512, True]]                 # 6
+  - [-1, 1, Conv, [1024, 3, 2]]                # 7-P5/32
+  - [-1, 3, C3k2, [1024, True]]                # 8
+  - [-1, 1, MHP_Block, [1024]]                 # 9
+  - [-1, 1, SPPF, [1024, 5]]                   # 10
+head:
+  # P5 → P4
+  - [-1, 1, nn.Upsample, [None, 2, 'nearest']]           # 11
+  - [[-1, 6], 1, Concat, [1]]                            # 12
+  - [-1, 3, C3k2, [512, False]]                          # 13
+  - [-1, 1, MHP_Block, [512]]                            # 14  ← P4融合后特征
+  # P4 → P3
+  - [-1, 1, nn.Upsample, [None, 2, 'nearest']]           # 15
+  - [[-1, 4], 1, Concat, [1]]                            # 16
+  - [-1, 3, C3k2, [256, False]]                          # 17
+  - [-1, 1, MHP_Block, [256]]                            # 18  ← P3融合后特征
+  # ========== P2融合（先Concat再LightASFF，避免通道计算错误） ==========
+  # 路径1：P3 → P2
+  - [-1, 1, nn.Upsample, [None, 2, 'nearest']]           # 19
+  # 路径2：P4 → P2
+  - [14, 1, nn.Upsample, [None, 4, 'nearest']]           # 20
+  # 第一步：先拼接
+  - [[2, 19, 20], 1, Concat, [1]]                        # 21
+  # 第二步：再做LightASFF自适应加权
+  - [-1, 1, LightASFF, [128]]                            # 22  ✅ LightASFF在这里
+  - [-1, 3, C3k2, [128, False]]                          # 23
+  - [-1, 1, CAE_Module, [128]]                           # 24  ← P2检测头
+  # P2 → P3
+  - [-1, 1, Conv, [128, 3, 2]]                           # 25
+  - [[-1, 18], 1, Concat, [1]]                           # 26
+  - [-1, 3, C3k2, [256, False]]                          # 27
+  - [-1, 1, CAE_Module, [256]]                           # 28
+  # P3 → P4
+  - [-1, 1, Conv, [256, 3, 2]]                           # 29
+  - [[-1, 14], 1, Concat, [1]]                           # 30
+  - [-1, 3, C3k2, [512, False]]                          # 31
+  - [-1, 1, CAE_Module, [512]]                           # 32
+  # P4 → P5
+  - [-1, 1, Conv, [512, 3, 2]]                           # 33
+  - [[-1, 10], 1, Concat, [1]]                           # 34
+  - [-1, 3, C3k2, [1024, False]]                         # 35
+  - [-1, 1, CAE_Module, [1024]]                          # 36
+  # 检测
+  - [[24, 28, 32, 36], 1, Detect, [nc]]                  # 37
