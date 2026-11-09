@@ -1,0 +1,10 @@
+# Update path to the local UAVDT detection dataset root after YOLO conversion.
+path: /path/to/UAVDT
+train: images/train
+val: images/val
+test: images/test
+
+names:
+  0: car
+  1: truck
+  2: bus
