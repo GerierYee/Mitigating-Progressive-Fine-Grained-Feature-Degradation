@@ -1,0 +1,71 @@
+# CMD-YOLO26: PFGR realization for 10-class UAV detection.
+# Paper-to-code mapping:
+#   Stage I   preserve -> FLPSPD
+#   Stage II  inject   -> P2 prediction branch
+#   Stage III transfer -> P2ASFF
+#   Stage IV  refine   -> LHMSP + FGBSCA
+
+nc: 10
+scales:
+  n: [0.33, 0.25, 1024]
+scale: n
+depth_multiple: 0.33
+width_multiple: 0.25
+max_channels: 1024
+end2end: false
+reg_max: 16
+
+backbone:
+  # [from, repeats, module, args]
+  - [-1, 1, Conv, [64, 3, 2]]
+  - [-1, 1, FLPSPD, [128]]
+  - [-1, 3, C3k2, [128, true]]             # P2/4
+  - [-1, 1, FLPSPD, [256]]
+  - [-1, 6, C3k2, [256, true]]             # P3/8
+  - [-1, 1, Conv, [512, 3, 2]]
+  - [-1, 6, C3k2, [512, true]]             # P4/16
+  - [-1, 1, Conv, [1024, 3, 2]]
+  - [-1, 3, C3k2, [1024, true]]            # P5/32
+  - [-1, 1, LHMSP, [1024]]
+  - [-1, 1, SPPF, [1024, 5]]
+
+head:
+  # P5 -> P4
+  - [-1, 1, nn.Upsample, [null, 2, nearest]]
+  - [[-1, 6], 1, Concat, [1]]
+  - [-1, 3, C3k2, [512, false]]
+  - [-1, 1, LHMSP, [512]]                  # layer 14
+
+  # P4 -> P3
+  - [-1, 1, nn.Upsample, [null, 2, nearest]]
+  - [[-1, 4], 1, Concat, [1]]
+  - [-1, 3, C3k2, [256, false]]
+  - [-1, 1, LHMSP, [256]]                  # layer 18
+
+  # P2 response injection and adaptive cross-scale transfer
+  - [-1, 1, nn.Upsample, [null, 2, nearest]]
+  - [14, 1, nn.Upsample, [null, 4, nearest]]
+  - [[2, 19, 20], 1, Concat, [1]]
+  - [-1, 1, P2ASFF, [128]]
+  - [-1, 3, C3k2, [128, false]]
+  - [-1, 1, FGBSCA, [128]]                 # P2 prediction input, layer 24
+
+  # P2 -> P3
+  - [-1, 1, Conv, [128, 3, 2]]
+  - [[-1, 18], 1, Concat, [1]]
+  - [-1, 3, C3k2, [256, false]]
+  - [-1, 1, FGBSCA, [256]]                 # P3 prediction input, layer 28
+
+  # P3 -> P4
+  - [-1, 1, Conv, [256, 3, 2]]
+  - [[-1, 14], 1, Concat, [1]]
+  - [-1, 3, C3k2, [512, false]]
+  - [-1, 1, FGBSCA, [512]]                 # P4 prediction input, layer 32
+
+  # P4 -> P5
+  - [-1, 1, Conv, [512, 3, 2]]
+  - [[-1, 10], 1, Concat, [1]]
+  - [-1, 3, C3k2, [1024, false]]
+  - [-1, 1, FGBSCA, [1024]]                # P5 prediction input, layer 36
+
+  - [[24, 28, 32, 36], 1, Detect, [nc]]

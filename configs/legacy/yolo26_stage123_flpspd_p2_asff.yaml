@@ -1,0 +1,72 @@
+# YOLO26 Stage I+II+III: FLP-SPD + P2 Head + LightASFF
+# Strict PFGR ablation version
+# Removed: MHP_Block, CAE_Module
+# Kept: SPD_Downsample, P2 Head, LightASFF
+
+nc: 10
+scales:
+  n: [0.33, 0.25, 1024]
+depth_multiple: 0.33
+width_multiple: 0.25
+max_channels: 1024
+
+backbone:
+  # [from, repeats, module, args]
+  - [-1, 1, Conv, [64, 3, 2]]                  # 0-P1/2
+  - [-1, 1, SPD_Downsample, [128]]             # 1-P2/4
+  - [-1, 3, C3k2, [128, True]]                 # 2-P2 feature
+
+  - [-1, 1, SPD_Downsample, [256]]             # 3-P3/8
+  - [-1, 6, C3k2, [256, True]]                 # 4-P3 feature
+
+  - [-1, 1, Conv, [512, 3, 2]]                 # 5-P4/16
+  - [-1, 6, C3k2, [512, True]]                 # 6-P4 feature
+
+  - [-1, 1, Conv, [1024, 3, 2]]                # 7-P5/32
+  - [-1, 3, C3k2, [1024, True]]                # 8-P5 feature
+  - [-1, 1, SPPF, [1024, 5]]                   # 9
+
+head:
+  # P5 -> P4
+  - [-1, 1, nn.Upsample, [None, 2, 'nearest']] # 10
+  - [[-1, 6], 1, Concat, [1]]                  # 11
+  - [-1, 3, C3k2, [512, False]]                # 12 P4 neck
+
+  # P4 -> P3
+  - [-1, 1, nn.Upsample, [None, 2, 'nearest']] # 13
+  - [[-1, 4], 1, Concat, [1]]                  # 14
+  - [-1, 3, C3k2, [256, False]]                # 15 P3 neck
+
+  # ========== P2 fusion with LightASFF ==========
+  # Path 1: P3 -> P2
+  - [-1, 1, nn.Upsample, [None, 2, 'nearest']] # 16 P3 -> P2
+
+  # Path 2: P4 -> P2
+  - [12, 1, nn.Upsample, [None, 4, 'nearest']] # 17 P4 -> P2
+
+  # Concat P2, upsampled P3, upsampled P4
+  - [[2, 16, 17], 1, Concat, [1]]              # 18
+
+  # Adaptive high-resolution fusion
+  - [-1, 1, LightASFF, [128]]                  # 19 P2-ASFF
+
+  # P2 output
+  - [-1, 3, C3k2, [128, False]]                # 20 P2 output
+
+  # P2 -> P3
+  - [-1, 1, Conv, [128, 3, 2]]                 # 21
+  - [[-1, 15], 1, Concat, [1]]                 # 22
+  - [-1, 3, C3k2, [256, False]]                # 23 P3 output
+
+  # P3 -> P4
+  - [-1, 1, Conv, [256, 3, 2]]                 # 24
+  - [[-1, 12], 1, Concat, [1]]                 # 25
+  - [-1, 3, C3k2, [512, False]]                # 26 P4 output
+
+  # P4 -> P5
+  - [-1, 1, Conv, [512, 3, 2]]                 # 27
+  - [[-1, 9], 1, Concat, [1]]                  # 28
+  - [-1, 3, C3k2, [1024, False]]               # 29 P5 output
+
+  # Detect P2/P3/P4/P5
+  - [[20, 23, 26, 29], 1, Detect, [nc]]        # 30
